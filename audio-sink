@@ -1,0 +1,65 @@
+#! /usr/bin/env python
+
+
+import argparse
+import difflib
+import os
+import re
+import sys
+
+import pulsectl
+
+
+def sink_list(pulse):
+    print('The list of known sinks is:')
+    for sink in pulse.sink_list():
+        print(f'  - Name: {sink.name}')
+        print(f'    Description: {sink.description}')
+
+def sink_find(pulse, sink_name, cutoff):
+    sink_name = sink_name.lower()
+    for sink in pulse.sink_list():
+        name = sink.name
+        words = sink.description.lower().split(' ')
+        if not sink.name.startswith('alsa_output.pci'):
+            try:
+                name = regex.match(name).group(1).lower()
+                words += re.sub('[-_]', ' ', name).split(' ')
+            except AttributeError:
+                pass
+        words = [word for word in words if word not in BLACKLIST]
+        if difflib.get_close_matches(sink_name, words, cutoff=cutoff):
+            return sink
+
+parser = argparse.ArgumentParser(
+    description='Get or set the default PulseAudio sink')
+parser.add_argument('sink', nargs='?',
+                    help='set the audio sink to the one matching the given argument')
+parser.add_argument('-l', '--list', action='store_true', dest='list_sinks',
+                    help='list sinks')
+args = parser.parse_args()
+
+pulse = pulsectl.Pulse(os.path.basename(parser.prog))
+if args.list_sinks:
+    sink_list(pulse)
+    sys.exit(0)
+
+if not args.sink:
+    sink = pulse.get_sink_by_name(pulse.server_info().default_sink_name)
+    print(f'{sink.name} ({sink.description})')
+    sys.exit(0)
+
+BLACKLIST = ['analog', 'audio', 'stereo', 'usb']
+regex = re.compile(r'alsa_output\.([^.]+?)(?:-\d+)?\..+')
+sink = None
+
+for cutoff in [0.6, 0.5, 0.4]:
+    sink = sink_find(pulse, args.sink.lower(), cutoff)
+    if sink:
+        break
+if not sink:
+    print(f'Could not find a sink matching "{args.sink}"')
+    sink_list(pulse)
+    exit(1)
+print(f'Setting default sink to "{sink.name} ({sink.description})"')
+pulse.default_set(sink)
