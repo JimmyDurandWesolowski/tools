@@ -1,5 +1,12 @@
 #! /usr/bin/env python
 
+'''
+Simple script to try to draw the "perfect" circle, such as the one to draw on
+https://vole.wtf/perfect-circle/
+'''
+
+
+
 import argparse
 import collections
 import math
@@ -9,57 +16,136 @@ import shutil
 import subprocess
 import sys
 import time
+from typing import List
+
+try:
+    # python-libxdo package, _not_ the xdo package!
+    import xdo  # type: ignore
+    XDO_LIB = True
+except ImportError:
+    xdo = None
+    XDO_LIB = False
 
 
-TOOLNAME = 'xdotool'
 REGEX_MOSELOC = re.compile(r'x:([0-9]+) y:([0-9]+).*')
+TOOLNAME = 'xdotool'
 
-
-Coord = collections.namedtuple('Coord', ['x', 'y'])
 
 def float_positive(value):
+    '''Check that value is a positive float number'''
     conv = float(value)
-    if conv <= 0:
+    if conv < 0:
         raise argparse.ArgumentTypeError(f'{value} is negative')
     return conv
 
+class CircleDrawer:
+    '''
+    Monkey typing, changing the function depending on XDO_LIB is an option, but
+    for sake of readability, a condition is used in the function, and a call to
+    the appropriate function is made.
+    '''
+    class RequirementError(Exception):
+        '''CircleDrawer expected prerequisite specific error'''
 
-def compute_pos(x_start, y_start, point_nb, radius, tweak):
-    # To come back to the original position, we need one more point
-    circle_slice = 2 * math.pi / (point_nb - 1)
-    # Additionally, a tweak is needed to ensure the circle is complete
-    # (redrawing one point more)
-    point_nb += tweak
-    return [
-        Coord(int(x_start + radius * math.cos(point * circle_slice)),
-              int(y_start + radius * math.sin(point * circle_slice)))
-        for point in range(point_nb + 1)
-    ]
+    class ExecutionError(Exception):
+        '''CircleDrawer execution error'''
 
-def command_list(x_pos, y_pos, arguments):
-    coordinates = compute_pos(
-        x_pos, y_pos, args.point_nb, args.radius, args.tweak)
-    coord = coordinates.pop(0)
-    cmds = [f'mousemove {coord.x} {coord.y}']
-    if args.mouse_press:
-        cmds.append('mousedown 1')
-    for coord in coordinates:
-        cmds += [
-            f'sleep {arguments.sleep}',
-            f'mousemove {coord.x} {coord.y}'
+    Coord = collections.namedtuple('Coord', ['x', 'y'])
+
+    def __init__(self):
+        self.coordinates = []
+        self.toolpath = None
+        self.xdo = None
+
+        if XDO_LIB:
+            self.xdo = xdo.Xdo()
+            return
+        self.toolpath = shutil.which(TOOLNAME)
+
+        if self.toolpath is not None:
+            return
+        raise CircleDrawer.RequirementError(
+            f'{TOOLNAME} missing, please install its package '
+            'or install the python-libxdo Python package')
+
+    def _draw_lib(self, sleep: float, mouse_press: bool = True):
+        if mouse_press:
+            self.xdo.mouse_down(xdo.CURRENTWINDOW, xdo.MOUSE_LEFT)
+        for coord in self.coordinates:
+            self.xdo.wait_for_mouse_move_to(coord.x, coord.y)
+        if mouse_press:
+            self.xdo.mouse_up(xdo.CURRENTWINDOW, xdo.MOUSE_LEFT)
+
+    def _draw_tool(self, sleep: float, mouse_press: bool = True):
+        cmds = [f'mousemove {coord.x} {coord.y} sleep {sleep}'
+                for coord in self.coordinates]
+        if mouse_press:
+            cmds = [cmds[0], 'mousedown 1'] + cmds[1:] + ['mouseup 1']
+        self._tool_run(cmds)
+
+    def _mouse_location_tool(self):
+        output = self._tool_run(['getmouselocation'])
+        match = REGEX_MOSELOC.match(output)
+        if match is None:
+            raise CircleDrawer.ExecutionError(
+                f'Failed to get mouse current location from "{output}"')
+        vals = (int(val) for val in match.groups())
+        return CircleDrawer.Coord(*vals)
+
+    def _mouse_location_lib(self) -> 'CircleDrawer.Coord':
+        loc = self.xdo.get_mouse_location()
+        return CircleDrawer.Coord(loc.x, loc.y)
+
+    def _tool_run(self, commands: List[str]):
+        cmds_str = ''.join([f'{cmd}{os.linesep}' for cmd in commands]).encode()
+        try:
+            with subprocess.Popen([self.toolpath, '-'],
+                                  stdin=subprocess.PIPE,
+                                  stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE) as proc:
+                stdout, _ = proc.communicate(cmds_str)
+        except subprocess.CalledProcessError as call_exc:
+            raise CircleDrawer.ExecutionError(call_exc)
+        return stdout.decode()
+
+    def compute(self, start: 'CircleDrawer.Coord',
+                radius: int, point_nb: int, tweak: int) -> None:
+        '''
+        Compute the circle coordinates, starting from the "start" ones,
+        with the given "radius" and point numbers "point_nb".
+        "tweak" allows adding more points to the circle to redraw part
+        of it.
+        Note: one number is first deducted to the number of points to account
+        for the last point being the same as the first to complete the loop.
+        '''
+        circle_slice = 2 * math.pi / (point_nb - 1)
+        point_nb += tweak
+        self.coordinates = [
+            CircleDrawer.Coord(
+                int(start.x + radius * math.cos(point * circle_slice)),
+                int(start.y + radius * math.sin(point * circle_slice)))
+            for point in range(point_nb + 1)
         ]
-    if args.mouse_press:
-        cmds.append('mouseup 1')
-    return cmds
+
+    def draw(self, sleep: float, mouse_press: bool) -> None:
+        '''draw the circle with the mouse, sleeping "sleep" seconds between
+        each movement
+        '''
+        if XDO_LIB:
+            self._draw_lib(sleep, mouse_press)
+            return
+        self._draw_tool(sleep, mouse_press)
+
+    def mouse_location(self) -> 'CircleDrawer.Coord':
+        '''Get the current mouse location on the screen as a
+        CircleDrawer.Coord.
+        '''
+        if XDO_LIB:
+            return self._mouse_location_lib()
+        return self._mouse_location_tool()
 
 
 if __name__ == '__main__':
-    toolpath = shutil.which(TOOLNAME)
-    if toolpath is None:
-        print(f'{TOOLNAME} missing, please install its package',
-              file=sys.stderr)
-        sys.exit(1)
-
     parser = argparse.ArgumentParser(
         description='Circle drawing with mouse input')
     parser.add_argument('-d', '--dump', action='store_true',
@@ -79,31 +165,25 @@ if __name__ == '__main__':
                         help='time to wait before drawing, in seconds')
     args = parser.parse_args()
 
+    try:
+        circle_drawer = CircleDrawer()
+    except CircleDrawer.RequirementError as exc:
+        print(exc)
+        sys.exit(1)
+
     if args.wait and not args.dump:
         time.sleep(args.wait - args.sleep)
-    try:
-        output = subprocess.check_output([toolpath, 'getmouselocation'])
-    except subprocess.CalledProcessError as exc:
-        sys.exit(1)
-
-    match = REGEX_MOSELOC.match(output.decode())
-    if match is None:
-        print('Failed to get mouse current location', file=sys.stderr)
-        sys.exit(1)
-
-    xstart, ystart = (int(val) for val in match.groups())
-    commands = command_list(xstart, ystart, args)
-    if args.dump:
-        print(commands)
-        sys.exit(0)
 
     try:
-        with subprocess.Popen([toolpath, '-'],
-                              stdin=subprocess.PIPE) as proc:
-            output, _ = proc.communicate(
-                ''.join([f'{cmd}{os.linesep}' for cmd in commands]).encode())
-    except subprocess.CalledProcessError:
-        print(proc.stderr, file=sys.stderr)
-        sys.exit(1)
-    if output:
-        print(output.decode())
+        pos = circle_drawer.mouse_location()
+        circle_drawer.compute(pos,
+                              radius=args.radius,
+                              point_nb=args.point_nb,
+                              tweak=args.tweak)
+        if args.dump:
+            print(circle_drawer.coordinates)
+            sys.exit(0)
+        circle_drawer.draw(args.sleep, args.mouse_press)
+    except CircleDrawer.ExecutionError as exc:
+        print(exc)
+        sys.exit(2)
