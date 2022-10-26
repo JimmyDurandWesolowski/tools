@@ -1,0 +1,7 @@
+#! /bin/bash
+
+
+date >> ${HOME}/.timelog
+i3lock -ti ${HOME}/Pictures/oni.png &
+sleep 3 && systemctl suspend
+sleep 60 && date >> ${HOME}/.timelog
