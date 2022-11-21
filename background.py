@@ -38,8 +38,8 @@ import requests
 
 class RedditPost:
     '''Reddit post class to ease the handling of Reddit posts'''
-    attrs = ['author', 'created', 'name', 'permalink', 'title', 'url']
-    __slots__ = attrs + ['_data', 'ext']
+    ATTRS = ['author', 'created', 'name', 'permalink', 'title', 'url']
+    __slots__ = ATTRS + ['ext']
     IMG_EXTS = ['jpg','png']
 
     class UnknownPost(Exception):
@@ -54,8 +54,8 @@ class RedditPost:
         self.url: str
         if data['kind'] != 't3':
             raise self.UnknownPost(f'Unknown post {data["kind"]}')
-        for attr in self.__slots__:
-            setattr(self, attr, data[attr])
+        for attr in self.ATTRS:
+            setattr(self, attr, data['data'][attr])
         try:
             _, self.ext = self.url.rsplit('.', 1)
         except ValueError:
@@ -76,13 +76,13 @@ class RedditPost:
         resp.raise_for_status()
         with open(img_dest, 'wb') as dest_fp:
             dest_fp.write(resp.content)
-        return dest
+        return img_dest
 
     def download_meta(self, meta_dest):
         '''Download the metadata from the post'''
         with open(meta_dest, 'wt', encoding='utf-8') as dest_fp:
             dest_fp.write(pprint.pformat(
-                {attr: getattr(self, attr) for attr in self.attrs}, indent=2))
+                {attr: getattr(self, attr) for attr in self.ATTRS}, indent=2))
 
 
 class Displays(collections.UserDict):
@@ -194,6 +194,7 @@ class BackgroundChanger:
                 return []
             raise exc
         json_obj = resp.json()
+        self.logger.debug('JSON response: %s', pprint.pformat(json_obj))
         try:
             posts = [RedditPost(post) for post in json_obj['data']['children']]
         except KeyError as key_err:
