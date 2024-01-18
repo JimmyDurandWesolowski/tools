@@ -9,7 +9,7 @@ WIDTH_MIN = 1920
 
 dest = pathlib.Path(os.environ["USERPROFILE"]).joinpath(
     "Pictures", "Spotlight")
-dest.mkdir()
+dest.mkdir(exist_ok=True)
 dir_src = pathlib.Path(os.environ["LocalAppData"]).joinpath("Packages",
     "Microsoft.Windows.ContentDeliveryManager_cw5n1h2txyewy", "LocalState",
     "Assets")
