@@ -4,7 +4,7 @@ import pathlib
 from PIL import Image
 
 
-SIZE_MIN = 200 * 1024
+SIZE_MIN = 100 * 1024
 WIDTH_MIN = 1920
 
 dest = pathlib.Path(os.environ["USERPROFILE"]).joinpath(
@@ -18,7 +18,6 @@ def filter_file_size(_filename):
     return os.path.isfile(_filename) and os.path.getsize(_filename) > SIZE_MIN
 
 files = list(filter(filter_file_size, dir_src.iterdir()))
-files.sort(key=lambda x: os.path.getmtime(x))
 for filename in files:
     with Image.open(filename, mode="r", formats=None) as img:
         if img.width < WIDTH_MIN or img.width < img.height:
